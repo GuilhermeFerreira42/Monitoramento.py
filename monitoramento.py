@@ -1,24 +1,24 @@
 import os
-import shutil
+import subprocess
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import tkinter as tk
-from tkinter import filedialog, scrolledtext
+from tkinter import filedialog, scrolledtext, messagebox
 import threading
 import time
 from datetime import datetime
-
-def set_permissions(file_path):
-    os.chmod(file_path, 0o777)  # Tenta mudar as permissões do arquivo
+import pystray
+from pystray import Icon as icon, Menu as menu, MenuItem as item
+from PIL import Image, ImageDraw
 
 class Watcher:
-    def __init__(self, directory_to_watch, directory_to_copy, copy_entire_directory, copy_only_files, log_text):
+    def __init__(self, directory_to_watch, directory_to_copy, include_folders, copy_only_files, log_text):
         self.DIRECTORY_TO_WATCH = directory_to_watch
         self.DIRECTORY_TO_COPY = directory_to_copy
-        self.copy_entire_directory = copy_entire_directory
+        self.include_folders = include_folders
         self.copy_only_files = copy_only_files
         self.log_text = log_text
-        self.event_handler = Handler(self.DIRECTORY_TO_WATCH, self.DIRECTORY_TO_COPY, self.copy_entire_directory, self.copy_only_files, self.log_text)
+        self.event_handler = Handler(self.DIRECTORY_TO_WATCH, self.DIRECTORY_TO_COPY, self.include_folders, self.copy_only_files, self.log_text)
         self.observer = Observer()
 
     def run(self):
@@ -45,15 +45,15 @@ class Watcher:
             log_file.write(log_entry)
 
 class Handler(FileSystemEventHandler):
-    def __init__(self, directory_to_watch, directory_to_copy, copy_entire_directory, copy_only_files, log_text):
+    def __init__(self, directory_to_watch, directory_to_copy, include_folders, copy_only_files, log_text):
         self.DIRECTORY_TO_WATCH = directory_to_watch
         self.DIRECTORY_TO_COPY = directory_to_copy
-        self.copy_entire_directory = copy_entire_directory
+        self.include_folders = include_folders
         self.copy_only_files = copy_only_files
         self.log_text = log_text
 
     def on_created(self, event):
-        if event.is_directory and not self.copy_entire_directory:
+        if event.is_directory and not self.include_folders:
             return None
         else:
             src_path = event.src_path
@@ -64,13 +64,24 @@ class Handler(FileSystemEventHandler):
 
             if os.path.abspath(src_path) != os.path.abspath(dest_path):
                 try:
-                    set_permissions(src_path)  # Tenta alterar permissões antes de copiar
-                    os.system(f'copy "{src_path}" "{dest_path}"')
-                    self.log_message(f"Arquivo copiado: {src_path}")
-                except PermissionError:
-                    self.log_message(f"Permissão negada: {src_path}")
+                    self.log_message(f"Tentando copiar de {src_path} para {dest_path}")
+                    self.retry_copy(src_path, dest_path)
                 except Exception as e:
-                    self.log_message(f"Erro ao copiar {src_path}: {e}")
+                    self.log_message(f"Erro ao copiar {src_path} para {dest_path}: {str(e)}")
+
+    def retry_copy(self, src_path, dest_path, retries=5, delay=5):
+        for i in range(retries):
+            try:
+                if os.path.isdir(src_path):
+                    subprocess.run(["xcopy", src_path, dest_path, "/E", "/H", "/C", "/I", "/Y"], check=True)
+                else:
+                    subprocess.run(["copy", src_path, dest_path], shell=True, check=True)
+                self.log_message(f"Arquivo copiado: {src_path}")
+                return
+            except subprocess.CalledProcessError as e:
+                self.log_message(f"Erro ao tentar copiar {src_path} para {dest_path} (tentativa {i+1}): {str(e)}")
+                time.sleep(delay)
+        self.log_message(f"Falha ao copiar {src_path} para {dest_path} após {retries} tentativas")
 
     def log_message(self, message):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -87,6 +98,7 @@ class App:
         self.watch_dir = ""
         self.copy_dir = ""
         self.watcher = None
+        self.create_tray_icon()
 
         self.select_watch_button = tk.Button(root, text="Selecionar Pasta para Observar", command=self.select_watch_directory)
         self.select_watch_button.pack()
@@ -100,9 +112,9 @@ class App:
         self.copy_dir_label = tk.Label(root, text="")
         self.copy_dir_label.pack()
 
-        self.copy_entire_directory_var = tk.IntVar()
-        self.copy_entire_directory_checkbox = tk.Checkbutton(root, text="Copiar Diretório Inteiro", variable=self.copy_entire_directory_var)
-        self.copy_entire_directory_checkbox.pack()
+        self.include_folders_var = tk.IntVar()
+        self.include_folders_checkbox = tk.Checkbutton(root, text="Incluir Pastas", variable=self.include_folders_var)
+        self.include_folders_checkbox.pack()
 
         self.copy_only_files_var = tk.IntVar()
         self.copy_only_files_checkbox = tk.Checkbutton(root, text="Copiar Apenas Arquivos", variable=self.copy_only_files_var)
@@ -120,6 +132,39 @@ class App:
         self.log_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=70, height=15)
         self.log_text.pack()
 
+        self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
+
+    def create_image(self, width, height, color1, color2):
+        # Generate an image and draw a pattern
+        image = Image.new('RGB', (width, height), color1)
+        dc = ImageDraw.Draw(image)
+        dc.rectangle(
+            (width // 10, height // 10, width - width // 10, height - height // 10),
+            fill=color2
+        )
+        return image
+
+    def create_tray_icon(self):
+        self.icon_image = self.create_image(64, 64, 'black', 'white')
+        self.tray_icon = icon("Tray Icon",
+                              self.icon_image,
+                              menu=menu(
+                                  item('Show', self.show_window),
+                                  item('Quit', self.quit_app)
+                              ))
+        threading.Thread(target=self.tray_icon.run).start()
+
+    def minimize_to_tray(self):
+        self.root.withdraw()
+        self.tray_icon.notify("Minimizado para a bandeja!")
+
+    def show_window(self, icon, item):
+        self.root.deiconify()
+
+    def quit_app(self, icon, item):
+        self.tray_icon.stop()
+        self.root.quit()
+
     def select_watch_directory(self):
         self.watch_dir = filedialog.askdirectory()
         self.watch_dir_label.config(text=f"Pasta para Observar: {self.watch_dir}")
@@ -133,7 +178,7 @@ class App:
     def start_watching(self):
         if self.watch_dir and self.copy_dir:
             self.start_button.config(bg="green")
-            self.watcher = Watcher(self.watch_dir, self.copy_dir, bool(self.copy_entire_directory_var.get()), bool(self.copy_only_files_var.get()), self.log_text)
+            self.watcher = Watcher(self.watch_dir, self.copy_dir, bool(self.include_folders_var.get()), bool(self.copy_only_files_var.get()), self.log_text)
             threading.Thread(target=self.watcher.run).start()
         else:
             self.log_message("Por favor, selecione ambas as pastas.")
@@ -155,4 +200,4 @@ class App:
 if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
-    root.mainloop()
+    

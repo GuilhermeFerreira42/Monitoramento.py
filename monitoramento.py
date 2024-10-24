@@ -60,15 +60,17 @@ class Handler(FileSystemEventHandler):
             return None
         else:
             src_path = os.path.abspath(event.src_path)
-            # Ajusta para incluir o diretório de destino correto mantendo a estrutura de pastas
             try:
-                relative_path = os.path.relpath(src_path, self.DIRECTORY_TO_WATCH)
+                relative_path = os.path.normpath(os.path.relpath(src_path, self.DIRECTORY_TO_WATCH))
                 dest_path = os.path.join(self.DIRECTORY_TO_COPY, relative_path)
                 self.log_message(f"Tentando copiar de {src_path} para {dest_path}")
-                # Garante que o diretório de destino exista
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                # Copia o arquivo ou pasta, dependendo do tipo
-                self.retry_copy(src_path, dest_path)
+                if not os.path.exists(dest_path):
+                    if not os.path.exists(os.path.dirname(dest_path)):
+                        os.makedirs(os.path.dirname(dest_path))
+                        self.log_message(f"Criando diretório: {os.path.dirname(dest_path)}")
+                    self.retry_copy(src_path, dest_path)
+                else:
+                    self.log_message(f"Arquivo ou pasta já existe em {dest_path}. Ignorando cópia.")
             except Exception as e:
                 self.log_message(f"Erro ao copiar {src_path} para {dest_path}: {str(e)}")
 
@@ -200,7 +202,7 @@ class App:
         self.log_text.insert(tk.END, log_entry)
         self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
         with open("log.txt", "a") as log_file:
-            log_file.write(log_entry)
+                        log_file.write(log_entry)
 
 def is_admin():
     try:
@@ -212,7 +214,6 @@ if __name__ == "__main__":
     if not is_admin():
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
         sys.exit()
-    
     root = tk.Tk()
     app = App(root)
     root.mainloop()

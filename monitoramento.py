@@ -1,5 +1,7 @@
 import os
-import subprocess
+import shutil
+import ctypes
+import sys
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import tkinter as tk
@@ -41,6 +43,7 @@ class Watcher:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"{timestamp} - {message}\n"
         self.log_text.insert(tk.END, log_entry)
+        self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
         with open("log.txt", "a") as log_file:
             log_file.write(log_entry)
 
@@ -56,29 +59,29 @@ class Handler(FileSystemEventHandler):
         if event.is_directory and not self.include_folders:
             return None
         else:
-            src_path = event.src_path
-            if self.copy_only_files:
-                dest_path = os.path.join(self.DIRECTORY_TO_COPY, os.path.basename(src_path))
-            else:
-                dest_path = os.path.join(self.DIRECTORY_TO_COPY, src_path[len(self.DIRECTORY_TO_WATCH):])
-
-            if os.path.abspath(src_path) != os.path.abspath(dest_path):
-                try:
-                    self.log_message(f"Tentando copiar de {src_path} para {dest_path}")
-                    self.retry_copy(src_path, dest_path)
-                except Exception as e:
-                    self.log_message(f"Erro ao copiar {src_path} para {dest_path}: {str(e)}")
+            src_path = os.path.abspath(event.src_path)
+            # Ajusta para incluir o diretório de destino correto mantendo a estrutura de pastas
+            try:
+                relative_path = os.path.relpath(src_path, self.DIRECTORY_TO_WATCH)
+                dest_path = os.path.join(self.DIRECTORY_TO_COPY, relative_path)
+                self.log_message(f"Tentando copiar de {src_path} para {dest_path}")
+                # Garante que o diretório de destino exista
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                # Copia o arquivo ou pasta, dependendo do tipo
+                self.retry_copy(src_path, dest_path)
+            except Exception as e:
+                self.log_message(f"Erro ao copiar {src_path} para {dest_path}: {str(e)}")
 
     def retry_copy(self, src_path, dest_path, retries=5, delay=5):
         for i in range(retries):
             try:
                 if os.path.isdir(src_path):
-                    subprocess.run(["xcopy", src_path, dest_path, "/E", "/H", "/C", "/I", "/Y"], check=True)
+                    shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
                 else:
-                    subprocess.run(["copy", src_path, dest_path], shell=True, check=True)
+                    shutil.copy2(src_path, dest_path)
                 self.log_message(f"Arquivo copiado: {src_path}")
                 return
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 self.log_message(f"Erro ao tentar copiar {src_path} para {dest_path} (tentativa {i+1}): {str(e)}")
                 time.sleep(delay)
         self.log_message(f"Falha ao copiar {src_path} para {dest_path} após {retries} tentativas")
@@ -87,6 +90,7 @@ class Handler(FileSystemEventHandler):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"{timestamp} - {message}\n"
         self.log_text.insert(tk.END, log_entry)
+        self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
         with open("log.txt", "a") as log_file:
             log_file.write(log_entry)
 
@@ -194,10 +198,21 @@ class App:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"{timestamp} - {message}\n"
         self.log_text.insert(tk.END, log_entry)
+        self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
         with open("log.txt", "a") as log_file:
             log_file.write(log_entry)
 
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
 if __name__ == "__main__":
+    if not is_admin():
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
+        sys.exit()
+    
     root = tk.Tk()
     app = App(root)
-    
+    root.mainloop()

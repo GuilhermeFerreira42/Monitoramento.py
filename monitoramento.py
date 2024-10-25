@@ -2,6 +2,7 @@ import os
 import shutil
 import ctypes
 import sys
+import json
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import tkinter as tk
@@ -12,6 +13,7 @@ from datetime import datetime
 import pystray
 from pystray import Icon as icon, Menu as menu, MenuItem as item
 from PIL import Image, ImageDraw
+import webbrowser
 
 class Watcher:
     def __init__(self, directory_to_watch, directory_to_copy, log_text):
@@ -41,7 +43,7 @@ class Watcher:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"{timestamp} - {message}\n"
         self.log_text.insert(tk.END, log_entry)
-        self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
+        self.log_text.yview(tk.END)
         with open("log.txt", "a") as log_file:
             log_file.write(log_entry)
 
@@ -85,7 +87,7 @@ class Handler(FileSystemEventHandler):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"{timestamp} - {message}\n"
         self.log_text.insert(tk.END, log_entry)
-        self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
+        self.log_text.yview(tk.END)
         with open("log.txt", "a") as log_file:
             log_file.write(log_entry)
 
@@ -94,6 +96,7 @@ class App:
         self.root = root
         self.root.title("Observador de Pastas")
         self.root.geometry("600x400")
+
         self.watch_dir = ""
         self.copy_dir = ""
         self.watcher = None
@@ -102,14 +105,16 @@ class App:
         self.select_watch_button = tk.Button(root, text="Selecionar Pasta para Observar", command=self.select_watch_directory)
         self.select_watch_button.pack()
 
-        self.watch_dir_label = tk.Label(root, text="")
+        self.watch_dir_label = tk.Label(root, text="", fg="blue", cursor="hand2")
         self.watch_dir_label.pack()
+        self.watch_dir_label.bind("<Button-1>", lambda e: self.open_directory(self.watch_dir))
 
         self.select_copy_button = tk.Button(root, text="Selecionar Pasta de Destino", command=self.select_copy_directory)
         self.select_copy_button.pack()
 
-        self.copy_dir_label = tk.Label(root, text="")
+        self.copy_dir_label = tk.Label(root, text="", fg="blue", cursor="hand2")
         self.copy_dir_label.pack()
+        self.copy_dir_label.bind("<Button-1>", lambda e: self.open_directory(self.copy_dir))
 
         self.button_frame = tk.Frame(root)
         self.button_frame.pack()
@@ -125,15 +130,8 @@ class App:
 
         self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
 
-    def create_image(self, width, height, color1, color2):
-        # Generate an image and draw a pattern
-        image = Image.new('RGB', (width, height), color1)
-        dc = ImageDraw.Draw(image)
-        dc.rectangle(
-            (width // 10, height // 10, width - width // 10, height - height // 10),
-            fill=color2
-        )
-        return image
+        # Carregar caminhos do arquivo JSON se existir
+        self.load_paths()
 
     def create_tray_icon(self):
         self.icon_image = self.create_image(64, 64, 'black', 'white')
@@ -144,6 +142,15 @@ class App:
                                   item('Quit', self.quit_app)
                               ))
         threading.Thread(target=self.tray_icon.run).start()
+
+    def create_image(self, width, height, color1, color2):
+        image = Image.new('RGB', (width, height), color1)
+        dc = ImageDraw.Draw(image)
+        dc.rectangle(
+            (width // 10, height // 10, width - width // 10, height - height // 10),
+            fill=color2
+        )
+        return image
 
     def minimize_to_tray(self):
         self.root.withdraw()
@@ -159,12 +166,35 @@ class App:
     def select_watch_directory(self):
         self.watch_dir = filedialog.askdirectory()
         self.watch_dir_label.config(text=f"Pasta para Observar: {self.watch_dir}")
-        self.log_message(f"Selecionado para observar: {self.watch_dir}")
+        self.save_paths()
 
     def select_copy_directory(self):
         self.copy_dir = filedialog.askdirectory()
         self.copy_dir_label.config(text=f"Pasta de Destino: {self.copy_dir}")
-        self.log_message(f"Selecionado para copiar: {self.copy_dir}")
+        self.save_paths()
+
+    def open_directory(self, path):
+        if path:
+            webbrowser.open(f'file://{os.path.abspath(path)}')
+
+    def save_paths(self):
+        paths = {
+            "watch_dir": self.watch_dir,
+            "copy_dir": self.copy_dir
+        }
+        with open('paths.json', 'w') as f:
+            json.dump(paths, f)
+
+    def load_paths(self):
+        try:
+            with open('paths.json', 'r') as f:
+                paths = json.load(f)
+                self.watch_dir = paths.get('watch_dir', '')
+                self.copy_dir = paths.get('copy_dir', '')
+                self.watch_dir_label.config(text=f"Pasta para Observar: {self.watch_dir}")
+                self.copy_dir_label.config(text=f"Pasta de Destino: {self.copy_dir}")
+        except FileNotFoundError:
+            pass
 
     def start_watching(self):
         if self.watch_dir and self.copy_dir:
@@ -185,20 +215,11 @@ class App:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"{timestamp} - {message}\n"
         self.log_text.insert(tk.END, log_entry)
-        self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
+        self.log_text.yview(tk.END)
         with open("log.txt", "a") as log_file:
             log_file.write(log_entry)
 
-def is_admin():
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        return False
-
 if __name__ == "__main__":
-    if not is_admin():
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
-        sys.exit()
     root = tk.Tk()
     app = App(root)
     root.mainloop()

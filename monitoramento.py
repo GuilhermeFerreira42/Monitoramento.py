@@ -14,13 +14,11 @@ from pystray import Icon as icon, Menu as menu, MenuItem as item
 from PIL import Image, ImageDraw
 
 class Watcher:
-    def __init__(self, directory_to_watch, directory_to_copy, include_folders, copy_only_files, log_text):
+    def __init__(self, directory_to_watch, directory_to_copy, log_text):
         self.DIRECTORY_TO_WATCH = directory_to_watch
         self.DIRECTORY_TO_COPY = directory_to_copy
-        self.include_folders = include_folders
-        self.copy_only_files = copy_only_files
         self.log_text = log_text
-        self.event_handler = Handler(self.DIRECTORY_TO_WATCH, self.DIRECTORY_TO_COPY, self.include_folders, self.copy_only_files, self.log_text)
+        self.event_handler = Handler(self.DIRECTORY_TO_WATCH, self.DIRECTORY_TO_COPY, self.log_text)
         self.observer = Observer()
 
     def run(self):
@@ -48,31 +46,26 @@ class Watcher:
             log_file.write(log_entry)
 
 class Handler(FileSystemEventHandler):
-    def __init__(self, directory_to_watch, directory_to_copy, include_folders, copy_only_files, log_text):
+    def __init__(self, directory_to_watch, directory_to_copy, log_text):
         self.DIRECTORY_TO_WATCH = directory_to_watch
         self.DIRECTORY_TO_COPY = directory_to_copy
-        self.include_folders = include_folders
-        self.copy_only_files = copy_only_files
         self.log_text = log_text
 
     def on_created(self, event):
-        if event.is_directory and not self.include_folders:
-            return None
-        else:
-            src_path = os.path.abspath(event.src_path)
-            try:
-                relative_path = os.path.normpath(os.path.relpath(src_path, self.DIRECTORY_TO_WATCH))
-                dest_path = os.path.join(self.DIRECTORY_TO_COPY, relative_path)
-                self.log_message(f"Tentando copiar de {src_path} para {dest_path}")
-                if not os.path.exists(dest_path):
-                    if not os.path.exists(os.path.dirname(dest_path)):
-                        os.makedirs(os.path.dirname(dest_path))
-                        self.log_message(f"Criando diretório: {os.path.dirname(dest_path)}")
-                    self.retry_copy(src_path, dest_path)
-                else:
-                    self.log_message(f"Arquivo ou pasta já existe em {dest_path}. Ignorando cópia.")
-            except Exception as e:
-                self.log_message(f"Erro ao copiar {src_path} para {dest_path}: {str(e)}")
+        src_path = os.path.abspath(event.src_path)
+        try:
+            relative_path = os.path.normpath(os.path.relpath(src_path, self.DIRECTORY_TO_WATCH))
+            dest_path = os.path.join(self.DIRECTORY_TO_COPY, relative_path)
+            self.log_message(f"Tentando copiar de {src_path} para {dest_path}")
+            if not os.path.exists(dest_path):
+                if not os.path.exists(os.path.dirname(dest_path)):
+                    os.makedirs(os.path.dirname(dest_path))
+                    self.log_message(f"Criando diretório: {os.path.dirname(dest_path)}")
+                self.retry_copy(src_path, dest_path)
+            else:
+                self.log_message(f"Arquivo ou pasta já existe em {dest_path}. Ignorando cópia.")
+        except Exception as e:
+            self.log_message(f"Erro ao copiar {src_path} para {dest_path}: {str(e)}")
 
     def retry_copy(self, src_path, dest_path, retries=5, delay=5):
         for i in range(retries):
@@ -117,14 +110,6 @@ class App:
 
         self.copy_dir_label = tk.Label(root, text="")
         self.copy_dir_label.pack()
-
-        self.include_folders_var = tk.IntVar()
-        self.include_folders_checkbox = tk.Checkbutton(root, text="Incluir Pastas", variable=self.include_folders_var)
-        self.include_folders_checkbox.pack()
-
-        self.copy_only_files_var = tk.IntVar()
-        self.copy_only_files_checkbox = tk.Checkbutton(root, text="Copiar Apenas Arquivos", variable=self.copy_only_files_var)
-        self.copy_only_files_checkbox.pack()
 
         self.button_frame = tk.Frame(root)
         self.button_frame.pack()
@@ -184,7 +169,7 @@ class App:
     def start_watching(self):
         if self.watch_dir and self.copy_dir:
             self.start_button.config(bg="green")
-            self.watcher = Watcher(self.watch_dir, self.copy_dir, bool(self.include_folders_var.get()), bool(self.copy_only_files_var.get()), self.log_text)
+            self.watcher = Watcher(self.watch_dir, self.copy_dir, self.log_text)
             threading.Thread(target=self.watcher.run).start()
         else:
             self.log_message("Por favor, selecione ambas as pastas.")
@@ -202,7 +187,7 @@ class App:
         self.log_text.insert(tk.END, log_entry)
         self.log_text.yview(tk.END)  # Garantir que a área de texto role para o final
         with open("log.txt", "a") as log_file:
-                        log_file.write(log_entry)
+            log_file.write(log_entry)
 
 def is_admin():
     try:
